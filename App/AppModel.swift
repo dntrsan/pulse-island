@@ -4,7 +4,9 @@ import Observation
 import WidgetKit
 
 /// アプリの中心。Pulse を見に行き、選んだセッションをライブアクティビティに映す。
-/// 無料の Apple ID ではプッシュ通知が使えないので、アプリを裏で動かし続けて（KeepAlive）自分で書き換える
+/// 無料の Apple ID ではプッシュ通知が使えないので、アプリを裏で動かし続けて（KeepAlive）自分で書き換える。
+/// iOS 18 からは書き換えに間隔と回数の制限があるので、キャラのコマは書き換えでは進めず（FrameCharacter が
+/// iOS の時計で進める）、中身の変化も急ぎでなければ間をあけてまとめる
 @MainActor
 @Observable
 final class AppModel {
@@ -23,6 +25,9 @@ final class AppModel {
         static let alertReplies = "island.alertReplies"
         static let alertDone = "island.alertDone"
         static let autoIsland = "island.auto"
+        static let animate = "island.animate"
+        static let diary = "island.diary"
+        static let lastBeat = "island.lastBeat"
         static let token = "pulse-token"
     }
 
@@ -64,27 +69,43 @@ final class AppModel {
     var autoIsland: Bool {
         didSet { defaults.set(autoIsland, forKey: K.autoIsland) }
     }
+    /// アイランドのキャラを動かす（コマを描いたフォントが崩れて見えるときに切る）
+    var animate: Bool {
+        didSet {
+            defaults.set(animate, forKey: K.animate)
+            refreshIsland()
+        }
+    }
 
     // MARK: - 状態
 
     private(set) var snapshot: IslandSnapshot?
     private(set) var connection: Connection
-    private(set) var tick = 0
     private(set) var islandRunning = false
     private(set) var lastError: String?
+    /// 裏での動きの記録（新しい順）。アイランドが止まったとき、何が起きていたかを設定画面で見るため
+    private(set) var diary: [String]
+    private(set) var lastReceived: Date?
+    private(set) var lastSentAt: Date?
+    private(set) var sentCount = 0
+    /// アプリの画面でコマを進める時計の起点
+    let anchor = Date.now
 
     @ObservationIgnored private var token: String?
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var pollGen = 0
     @ObservationIgnored private var pollRunning: Int?
-    @ObservationIgnored private var animTask: Task<Void, Never>?
+    @ObservationIgnored private var beatTask: Task<Void, Never>?
     @ObservationIgnored private var activity: Activity<IslandAttributes>?
-    @ObservationIgnored private var lastState: IslandAttributes.ContentState?
+    /// 最後にアイランドへ送った中身
+    @ObservationIgnored private var lastSent: IslandAttributes.ContentState?
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var flushAt: Date?
     @ObservationIgnored private var seenAsks: Set<String>?
     @ObservationIgnored private var lastStatus: [String: SessionStatus] = [:]
     @ObservationIgnored private var lastWidgetReload = Date.distantPast
     @ObservationIgnored private var lastLimits: [Limits?] = []
-    @ObservationIgnored private let audio = KeepAlive()
+    @ObservationIgnored private let audio: KeepAlive
     @ObservationIgnored private let defaults = UserDefaults.standard
 
     private init() {
@@ -96,8 +117,17 @@ final class AppModel {
         alertReplies = d.object(forKey: K.alertReplies) as? Bool ?? true
         alertDone = d.object(forKey: K.alertDone) as? Bool ?? false
         autoIsland = d.object(forKey: K.autoIsland) as? Bool ?? true
+        animate = d.object(forKey: K.animate) as? Bool ?? true
+        diary = d.stringArray(forKey: K.diary) ?? []
         token = Keychain.get(K.token)
         connection = token == nil ? .unpaired : .connecting
+        audio = KeepAlive()
+        audio.onEvent = { [weak self] in self?.note($0) }
+        if let last = d.object(forKey: K.lastBeat) as? Date {
+            note("アプリが起動した（前のアプリが最後に動いていたのは \(Self.stamp(last))）")
+        } else {
+            note("アプリが起動した")
+        }
         if let a = Activity<IslandAttributes>.activities.first {
             activity = a
             islandRunning = true
@@ -106,6 +136,7 @@ final class AppModel {
     }
 
     var isPaired: Bool { connection != .unpaired }
+    var audioPlaying: Bool { audio.isPlaying }
 
     // MARK: - ペアリング
 
@@ -142,8 +173,8 @@ final class AppModel {
         guard token != nil else { return }
         applyKeepAlive()
         if pollRunning == nil { startPolling() }
-        if animTask == nil {
-            animTask = Task { [weak self] in await self?.animLoop() }
+        if beatTask == nil {
+            beatTask = Task { [weak self] in await self?.heartbeat() }
         }
         if autoIsland { showIsland() }
     }
@@ -171,13 +202,16 @@ final class AppModel {
                 // 続けて失敗しているときは待たずに今の状態をもらう
                 let snap = try await PulseClient(base: base, token: token).island(wait: failures == 0 ? snapshot?.v : nil)
                 guard gen == pollGen else { return }
+                if case .offline = connection { note("Pulse にまたつながった") }
                 failures = 0
                 lastError = nil
+                lastReceived = .now
                 connection = .online
                 apply(snap)
             } catch is CancellationError {
                 return
             } catch PulseError.unauthorized {
+                note("Pulse に鍵を断られた（ペアリングが外れた）")
                 lastError = PulseError.unauthorized.errorDescription
                 Keychain.set(nil, for: K.token)
                 self.token = nil
@@ -188,6 +222,7 @@ final class AppModel {
                 failures += 1
                 lastError = error.localizedDescription
                 if failures >= 2 {
+                    if failures == 2 { note("Pulse につながらない（\(error.localizedDescription)）") }
                     connection = .offline(error.localizedDescription)
                     refreshIsland()
                 }
@@ -196,13 +231,19 @@ final class AppModel {
         }
     }
 
-    /// 作業中と返事待ちの間だけ、2 秒ごとにキャラのコマを進める
-    private func animLoop() async {
+    /// 5 秒ごとに、裏で眠らされていなかったかと、常駐用の音声が止まっていないかを見回る
+    private func heartbeat() async {
+        var last = Date.now
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(2))
-            guard let s = lastState, s.status.isBusy || s.status.needsYou else { continue }
-            tick &+= 1
-            refreshIsland()
+            try? await Task.sleep(for: .seconds(5))
+            let now = Date.now
+            let gap = now.timeIntervalSince(last)
+            if gap > 30 {
+                note("裏で止まっていた（\(Self.stamp(last)) から \(Self.span(gap))）")
+            }
+            last = now
+            defaults.set(now, forKey: K.lastBeat)
+            if keepAlive, token != nil { audio.ensureRunning() }
         }
     }
 
@@ -234,6 +275,7 @@ final class AppModel {
             }
         }
 
+        if let alert { note("知らせた：\(alert.title)") }
         refreshIsland(alert: alert)
         reloadWidgetsIfNeeded(snap)
     }
@@ -275,7 +317,7 @@ final class AppModel {
     func makeState() -> IslandAttributes.ContentState {
         var s = IslandAttributes.ContentState.empty
         s.provider = provider
-        s.tick = tick
+        s.animate = animate
         switch connection {
         case .unpaired:
             s.status = .offline
@@ -296,8 +338,9 @@ final class AppModel {
         let f = focus(in: snap)
         let limits = snap.data(f.provider)?.limits
         s.provider = f.provider
-        s.fiveHour = limits?.fiveHour?.pct
-        s.week = limits?.week?.pct
+        // 1% 未満の揺れで書き換えないように丸める
+        s.fiveHour = limits?.fiveHour?.pct.rounded()
+        s.week = limits?.week?.pct.rounded()
         s.limitIsEstimate = limits?.isEstimate ?? false
         s.othersWaiting = snap.allSessions.filter { $0.session.status.needsYou && $0.session.id != f.session?.id }.count
         guard let session = f.session else {
@@ -315,11 +358,25 @@ final class AppModel {
         return s
     }
 
+    /// アイランドを今の中身に書き換える。返事待ち・完了・切断などの変化はすぐ、
+    /// ほかの変化は前の書き換えから 15 秒、文言とリミットだけの変化は 60 秒あけて、まとめて送る
     func refreshIsland(alert: (title: String, body: String)? = nil) {
-        let state = makeState()
-        guard state != lastState || alert != nil else { return }
-        lastState = state
         guard let activity else { return }
+        let state = makeState()
+        guard state != lastSent || alert != nil else { return }
+        if alert == nil, let lastSent, let lastSentAt {
+            let wait = Self.minGap(from: lastSent, to: state) - Date.now.timeIntervalSince(lastSentAt)
+            if wait > 0 {
+                scheduleFlush(in: wait)
+                return
+            }
+        }
+        flushTask?.cancel()
+        flushTask = nil
+        flushAt = nil
+        lastSent = state
+        lastSentAt = .now
+        sentCount += 1
         let content = ActivityContent(state: state, staleDate: nil)
         let config = alert.map {
             AlertConfiguration(
@@ -329,6 +386,34 @@ final class AppModel {
             )
         }
         Task { await activity.update(content, alertConfiguration: config) }
+    }
+
+    private static func minGap(from old: IslandAttributes.ContentState, to new: IslandAttributes.ContentState) -> TimeInterval {
+        if old.status != new.status || old.provider != new.provider || old.ask != new.ask
+            || old.focusedOther != new.focusedOther || old.animate != new.animate {
+            return 0
+        }
+        var minor = old
+        minor.detail = new.detail
+        minor.fiveHour = new.fiveHour
+        minor.week = new.week
+        minor.limitIsEstimate = new.limitIsEstimate
+        return minor == new ? 60 : 15
+    }
+
+    /// 間をあけた書き換えを予約する。すでにもっと早い予約があればそれに任せる
+    private func scheduleFlush(in wait: TimeInterval) {
+        let at = Date.now.addingTimeInterval(wait)
+        if let flushAt, flushAt <= at { return }
+        flushTask?.cancel()
+        flushAt = at
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self else { return }
+            self.flushTask = nil
+            self.flushAt = nil
+            self.refreshIsland()
+        }
     }
 
     // MARK: - ライブアクティビティを出す・閉じる
@@ -342,7 +427,8 @@ final class AppModel {
             if activity?.id != a.id { watch(a) }
             activity = a
             islandRunning = true
-            lastState = nil
+            // 今の中身で必ず書き直す
+            lastSent = nil
             refreshIsland()
             return
         }
@@ -354,11 +440,14 @@ final class AppModel {
                 pushType: nil
             )
             activity = a
-            lastState = state
+            lastSent = state
+            lastSentAt = .now
             islandRunning = true
             watch(a)
+            note("アイランドを出した")
         } catch {
             lastError = "アイランドを出せませんでした（\(error.localizedDescription)）"
+            note(lastError ?? "")
         }
     }
 
@@ -377,9 +466,39 @@ final class AppModel {
                 if self?.activity?.id == a.id {
                     self?.activity = nil
                     self?.islandRunning = false
+                    self?.note(st == .dismissed ? "アイランドが消された" : "アイランドが終わった（8 時間たったなど）")
                 }
                 break
             }
         }
+    }
+
+    // MARK: - 記録
+
+    /// 記録に 1 行足す（新しい順に 80 行まで、端末に保存）
+    func note(_ text: String) {
+        diary.insert("\(Self.stamp(.now))  \(text)", at: 0)
+        if diary.count > 80 { diary.removeLast(diary.count - 80) }
+        defaults.set(diary, forKey: K.diary)
+    }
+
+    func clearDiary() {
+        diary = []
+        defaults.removeObject(forKey: K.diary)
+    }
+
+    private static let stampFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ja_JP")
+        f.dateFormat = "M/d HH:mm:ss"
+        return f
+    }()
+
+    static func stamp(_ date: Date) -> String { stampFormat.string(from: date) }
+
+    static func span(_ seconds: TimeInterval) -> String {
+        if seconds < 120 { return "\(Int(seconds)) 秒" }
+        if seconds < 7200 { return "\(Int(seconds / 60)) 分" }
+        return String(format: "%.1f 時間", seconds / 3600)
     }
 }

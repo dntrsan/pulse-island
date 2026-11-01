@@ -22,8 +22,16 @@ struct RootView: View {
                 PairingView(model: model)
             }
         }
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { model.start() }
+        .onChange(of: scenePhase, initial: true) { old, phase in
+            switch phase {
+            case .active:
+                if old == .background { model.note("アプリを開いた") }
+                model.start()
+            case .background:
+                model.note("アプリを閉じた（裏へ）")
+            default:
+                break
+            }
         }
     }
 }

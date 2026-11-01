@@ -48,5 +48,27 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>PulseFrames-ClaudeThink.ttf</string>
+		<string>PulseFrames-ClaudeThinkAccent.ttf</string>
+		<string>PulseFrames-ClaudeRead.ttf</string>
+		<string>PulseFrames-ClaudeSearch.ttf</string>
+		<string>PulseFrames-ClaudeEdit.ttf</string>
+		<string>PulseFrames-ClaudeShell.ttf</string>
+		<string>PulseFrames-ClaudeShellAccent.ttf</string>
+		<string>PulseFrames-ClaudeWeb.ttf</string>
+		<string>PulseFrames-ClaudeAgent.ttf</string>
+		<string>PulseFrames-ClaudePlan.ttf</string>
+		<string>PulseFrames-ClaudeAsk.ttf</string>
+		<string>PulseFrames-ClaudeAskAccent.ttf</string>
+		<string>PulseFrames-ClaudeOther.ttf</string>
+		<string>PulseFrames-CodexThink.ttf</string>
+		<string>PulseFrames-CodexEdit.ttf</string>
+		<string>PulseFrames-CodexRead.ttf</string>
+		<string>PulseFrames-CodexShell.ttf</string>
+		<string>PulseFrames-CodexAsk.ttf</string>
+		<string>PulseFrames-AntigravityOrbit.ttf</string>
+	</array>
 </dict>
 </plist>

@@ -49,7 +49,7 @@ struct HomeView: View {
     private var hero: some View {
         let s = model.makeState()
         return HStack(spacing: 16) {
-            LiveCharacter(provider: s.provider, activity: s.activity, status: s.status, height: 52)
+            heroCharacter(s)
                 .frame(width: 76, height: 64)
             VStack(alignment: .leading, spacing: 4) {
                 Text(s.focusedOther ? "\(s.provider.name) · \(s.status.label)（別のセッション）" : "\(s.provider.name) · \(s.status.label)")
@@ -74,6 +74,15 @@ struct HomeView: View {
         }
         .padding(16)
         .glassEffect(.regular, in: .rect(cornerRadius: 24))
+    }
+
+    /// アイランドと同じ仕組み（iOS の時計とコマのフォント）で動かして、ここでも見えるようにする
+    @ViewBuilder private func heroCharacter(_ s: IslandAttributes.ContentState) -> some View {
+        if model.animate, FrameCharacter.animates(s.status) {
+            FrameCharacter(provider: s.provider, activity: s.activity, status: s.status, anchor: model.anchor, height: s.provider == .claude ? 44 : 52)
+        } else {
+            LiveCharacter(provider: s.provider, activity: s.activity, status: s.status, height: 52)
+        }
     }
 
     private var sessionList: some View {

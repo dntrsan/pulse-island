@@ -160,8 +160,9 @@ struct IslandAttributes: ActivityAttributes {
         var detail: String
         /// いまのターンが始まった時刻（右側の経過時間に使う）
         var since: Date?
-        /// アニメーションのコマ。作業中は 2 秒ごとに 1 つ進む
-        var tick: Int
+        /// キャラを動かすか（アプリの設定。ウィジェットからはアプリの設定を読めないので、ここで渡す）。
+        /// 前の版のアイランドには無い値なので、無ければ動かす
+        var animate: Bool?
         var ask: String?
         /// 表示中のほかに、返事を待っているセッションの数
         var othersWaiting: Int
@@ -174,7 +175,7 @@ struct IslandAttributes: ActivityAttributes {
 
         static let empty = ContentState(
             provider: .claude, title: "Pulse Island", status: .none, activity: .other, detail: "",
-            since: nil, tick: 0, ask: nil, othersWaiting: 0, fiveHour: nil, week: nil,
+            since: nil, animate: true, ask: nil, othersWaiting: 0, fiveHour: nil, week: nil,
             limitIsEstimate: false, plan: nil, focusedOther: false
         )
     }

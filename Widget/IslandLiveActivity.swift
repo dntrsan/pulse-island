@@ -10,21 +10,15 @@ import WidgetKit
 struct IslandLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: IslandAttributes.self) { context in
-            LockScreenIsland(state: context.state)
+            LockScreenIsland(state: context.state, anchor: context.attributes.startedAt)
                 .activityBackgroundTint(Color.black.opacity(0.6))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    CharacterView(
-                        provider: context.state.provider,
-                        activity: context.state.activity,
-                        status: context.state.status,
-                        tick: context.state.tick,
-                        height: 30
-                    )
-                    .padding(.leading, 6)
-                    .padding(.top, 4)
+                    IslandCharacter(state: context.state, anchor: context.attributes.startedAt, height: 30)
+                        .padding(.leading, 6)
+                        .padding(.top, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     TrailingStatus(state: context.state, large: true)
@@ -46,26 +40,30 @@ struct IslandLiveActivity: Widget {
                         .padding(.horizontal, 6)
                 }
             } compactLeading: {
-                CharacterView(
-                    provider: context.state.provider,
-                    activity: context.state.activity,
-                    status: context.state.status,
-                    tick: context.state.tick,
-                    height: 18
-                )
-                .padding(.leading, 2)
+                IslandCharacter(state: context.state, anchor: context.attributes.startedAt, height: 18)
+                    .padding(.leading, 2)
             } compactTrailing: {
                 TrailingStatus(state: context.state, large: false)
             } minimal: {
-                CharacterView(
-                    provider: context.state.provider,
-                    activity: context.state.activity,
-                    status: context.state.status,
-                    tick: context.state.tick,
-                    height: 12
-                )
+                IslandCharacter(state: context.state, anchor: context.attributes.startedAt, height: 12)
             }
             .keylineTint(context.state.status.needsYou ? .orange : context.state.provider.color)
+        }
+    }
+}
+
+/// アイランドとロック画面のキャラ。作業中と返事待ちは iOS の時計で動かし（FrameCharacter）、
+/// ほかの状態や、設定で動かさないときは止まった絵にする
+struct IslandCharacter: View {
+    let state: IslandAttributes.ContentState
+    let anchor: Date
+    let height: CGFloat
+
+    var body: some View {
+        if state.animate != false, FrameCharacter.animates(state.status) {
+            FrameCharacter(provider: state.provider, activity: state.activity, status: state.status, anchor: anchor, height: height)
+        } else {
+            CharacterView(provider: state.provider, activity: state.activity, status: state.status, tick: 0, height: height)
         }
     }
 }
@@ -161,11 +159,12 @@ struct IslandDetail: View {
 
 struct LockScreenIsland: View {
     let state: IslandAttributes.ContentState
+    let anchor: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                CharacterView(provider: state.provider, activity: state.activity, status: state.status, tick: state.tick, height: 34)
+                IslandCharacter(state: state, anchor: anchor, height: 34)
                     .frame(minWidth: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(headline(state))
