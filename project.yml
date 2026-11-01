@@ -1,0 +1,52 @@
+name: PulseIsland
+
+options:
+  bundleIdPrefix: com.dntrsan
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: ja
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    GENERATE_INFOPLIST_FILE: NO
+
+targets:
+  PulseIsland:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dntrsan.pulseisland
+        INFOPLIST_FILE: Config/App-Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Shared のインテントが、アプリ本体でだけ AppModel を呼ぶための印
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) MAIN_APP"
+    dependencies:
+      - target: PulseIslandWidget
+
+  PulseIslandWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widget
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dntrsan.pulseisland.widget
+        INFOPLIST_FILE: Config/Widget-Info.plist
+        SKIP_INSTALL: YES
+
+schemes:
+  PulseIsland:
+    build:
+      targets:
+        PulseIsland: all
+    archive:
+      config: Release

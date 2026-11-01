@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      # アップロードには Xcode 26 以上が要る（2026-04-28 から）。今の安定版を固定する
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      # 署名は Windows 側の Sideloadly でするので、ここでは署名なしでビルドする
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project PulseIsland.xcodeproj \
+            -scheme PulseIsland \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: .*(deprecated|unavailable)|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Package IPA
+        run: |
+          APP=build/Build/Products/Release-iphoneos/PulseIsland.app
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry PulseIsland.ipa Payload
+          echo "--- bundle"
+          find Payload -maxdepth 4 -name "*.appex"
+          echo "--- app Info.plist"
+          plutil -p "$APP/Info.plist"
+          echo "--- widget Info.plist"
+          plutil -p "$APP/PlugIns/PulseIslandWidget.appex/Info.plist"
+          ls -lh PulseIsland.ipa
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: PulseIsland-ipa
+          path: PulseIsland.ipa
+          retention-days: 30
