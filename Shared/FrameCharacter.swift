@@ -22,8 +22,11 @@ struct FrameClock: View {
             .font(.custom("PulseFrames-\(font)", fixedSize: size))
             .lineLimit(1)
             .multilineTextAlignment(.trailing)
-            // 前の桁とコロンはフォントの中で幅 0 にしてあるが、効かなかったときも右端の 1 コマだけを見せる
-            .fixedSize()
+            // fixedSize() は付けない。時計の表示には決まった幅がないので、ライブアクティビティでは幅が NaN になり、
+            // キャラごと描かれなくなる（実機で消えた。expo/expo#52176 と同じ）。
+            // 幅は広めに渡して右に寄せ、右端の 1 コマだけを切り抜く。前の桁とコロンはフォントの中で幅 0 にしてあるが、
+            // 効かなかったときも最後の桁が右端に来る
+            .frame(width: width * 8, height: size, alignment: .trailing)
             .frame(width: width, height: size, alignment: .trailing)
             .clipped()
     }
